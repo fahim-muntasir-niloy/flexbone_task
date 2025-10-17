@@ -7,3 +7,6 @@ python-dotenv
 requests
 rich
 pillow
+slowapi
+redis
+cachetools
