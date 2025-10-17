@@ -4,7 +4,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from google.cloud import vision
 from models.ocr_models import OCRRequest, OCRResponse
-from utils import get_confidence_score
+from utils import text_cleanup, get_confidence_score, get_image_metadata
 import logging
 from rich import print
 
@@ -22,7 +22,7 @@ except Exception as e:
 
 
 MAX_FILE_SIZE = 10 * 1024 * 1024
-SUPPORTED_CONTENT_TYPES = ["image/jpeg", "image/jpg", "image/png"]
+SUPPORTED_CONTENT_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/gif"]
 
 
 @ocr_router.post(
@@ -39,17 +39,20 @@ async def extract_text(image: UploadFile = File(...)):
     Returns:
         JSONResponse: A JSON response containing the extracted text and confidence score.
     """
+    filename = image.filename
+    content_type = image.content_type
 
     start_time = time.time()
 
     # Validate file type
-    if image.content_type not in SUPPORTED_CONTENT_TYPES:
+    if content_type not in SUPPORTED_CONTENT_TYPES:
         raise HTTPException(
             status_code=415,  # Unsupported Media Type
-            detail=f"Unsupported file format. Please upload a JPG/JPEG/PNG image. Found: {image.content_type}",
+            detail=f"Unsupported file format. Please upload a JPG/JPEG/PNG image. Found: {content_type}",
         )
 
     contents = await image.read()
+    image_metadata = get_image_metadata(filename, content_type, contents)
 
     # Validate file size
     if len(contents) > MAX_FILE_SIZE:
@@ -85,12 +88,14 @@ async def extract_text(image: UploadFile = File(...)):
         processing_time_ms = round((end_time - start_time) * 1000)
 
         if texts.text:
-            print(f"Extracted Text: {texts.text}")
+            clean_text = text_cleanup(texts.text)
+            print(f"Extracted Text: {clean_text}")
             json_response = {
                 "success": True,
-                "text": texts.text,
+                "text": clean_text,
                 "confidence": score,
                 "processing_time_ms": processing_time_ms,
+                "metadata": image_metadata,
             }
             return JSONResponse(content=json_response)
         else:
@@ -100,6 +105,7 @@ async def extract_text(image: UploadFile = File(...)):
                 "text": "No text found in the image.",
                 "confidence": 0.0,
                 "processing_time_ms": processing_time_ms,
+                "metadata": image_metadata,
             }
             return JSONResponse(content=json_response)
 

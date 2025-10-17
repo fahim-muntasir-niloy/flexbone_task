@@ -10,3 +10,4 @@ class OCRResponse(BaseModel):
     text: str
     confidence: float
     processing_time_ms: float
+    metadata: dict
