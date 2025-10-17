@@ -3,7 +3,7 @@ import time
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from google.cloud import vision
-from models.ocr_models import OCRRequest, OCRResponse
+from models.ocr_models import OCRRequest, OCRResponse, BatchOCRResponse
 from utils import text_cleanup, get_confidence_score, get_image_metadata
 import logging
 from rich import print
@@ -25,12 +25,6 @@ MAX_FILE_SIZE = 10 * 1024 * 1024
 SUPPORTED_CONTENT_TYPES = ["image/jpeg", "image/jpg", "image/png", "image/gif"]
 
 
-@ocr_router.post(
-    "/extract-text",
-    summary="Extract Text from Image",
-    description="Upload an image to extract text content using OCR.",
-    response_model=OCRResponse,
-)
 async def extract_text(image: UploadFile = File(...)):
     """
     This endpoint accepts a JPG image file and returns the extracted text.
@@ -97,7 +91,7 @@ async def extract_text(image: UploadFile = File(...)):
                 "processing_time_ms": processing_time_ms,
                 "metadata": image_metadata,
             }
-            return JSONResponse(content=json_response)
+            return json_response
         else:
             print("No text found in the image.")
             json_response = {
@@ -107,7 +101,7 @@ async def extract_text(image: UploadFile = File(...)):
                 "processing_time_ms": processing_time_ms,
                 "metadata": image_metadata,
             }
-            return JSONResponse(content=json_response)
+            return json_response
 
     except Exception as e:
         logging.error(f"An unexpected error occurred: {e}")
@@ -115,3 +109,54 @@ async def extract_text(image: UploadFile = File(...)):
             status_code=500,
             detail=f"An internal server error occurred while processing the image: {str(e)}",
         )
+
+
+@ocr_router.post(
+    "/extract-text",
+    summary="Extract Text from Image",
+    description="Upload an image to extract text content using OCR.",
+    response_model=OCRResponse,
+)
+async def extract_text_endpoint(image: UploadFile = File(...)):
+    """
+    This endpoint accepts a JPG image file and returns the extracted text.
+    Args:
+        image (UploadFile): The image file uploaded by the user.
+    Returns:
+        JSONResponse: A JSON response containing the extracted text and confidence score.
+    """
+    result = await extract_text(image)
+    return JSONResponse(content=result)
+
+
+# batch extract endpoint
+@ocr_router.post(
+    "/batch-extract-text",
+    summary="Batch Extract Text from Images",
+    description="Upload multiple images to extract text content using OCR.",
+    response_model=BatchOCRResponse,
+)
+async def batch_extract_text(images: list[UploadFile] = File(...)):
+    """
+    This endpoint accepts multiple JPG image files and returns the extracted text for each.
+    Args:
+        images (list[UploadFile]): The list of image files uploaded by the user.
+    Returns:
+        JSONResponse: A JSON response containing the extracted text and confidence score for each image.
+    """
+    results = []
+    for image in images:
+        try:
+            response = await extract_text(image)
+            results.append(response)
+        except HTTPException as http_exc:
+            results.append(
+                {
+                    "success": False,
+                    "text": f"Error processing image {image.filename}: {http_exc.detail}",
+                    "confidence": 0.0,
+                    "processing_time_ms": 0,
+                    "metadata": {},
+                }
+            )
+    return JSONResponse(content={"results": results})

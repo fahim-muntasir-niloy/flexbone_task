@@ -11,3 +11,7 @@ class OCRResponse(BaseModel):
     confidence: float
     processing_time_ms: float
     metadata: dict
+
+
+class BatchOCRResponse(BaseModel):
+    results: list[OCRResponse]
