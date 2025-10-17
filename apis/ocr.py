@@ -11,7 +11,7 @@ from rich import print
 
 ocr_router = APIRouter()
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "cloud_vision_credentials.json"
+# os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "cloud_vision_credentials.json" -> as it's handled automatically in cloud run
 
 try:
     vision_client = vision.ImageAnnotatorClient()
