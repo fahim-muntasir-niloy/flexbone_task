@@ -1,6 +1,10 @@
 import re
 import io
+import hashlib
+from typing import Dict, Optional, Any
 from PIL import Image, ExifTags
+from cachetools import TTLCache
+from datetime import datetime
 
 
 def text_cleanup(text: str) -> str:
@@ -109,4 +113,66 @@ def get_image_metadata(filename: str, content_type: str, contents: str) -> dict:
         "file_info": {**basic_metadata, "size_bytes": file_size},
         "image_info": image_metadata,
         "exif_info": exif_data_readable or "No EXIF data found",
+    }
+
+
+# Global cache for OCR results - TTL cache with 1 hour expiration
+ocr_cache: TTLCache = TTLCache(maxsize=1000, ttl=3600)  # 1000 items, 1 hour TTL
+
+
+def generate_image_hash(image_content: bytes) -> str:
+    """
+    Generate a SHA-256 hash of the image content for caching purposes.
+    
+    Args:
+        image_content (bytes): The binary content of the image.
+    
+    Returns:
+        str: SHA-256 hash of the image content.
+    """
+    return hashlib.sha256(image_content).hexdigest()
+
+
+def get_cached_result(image_hash: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve cached OCR result for a given image hash.
+    
+    Args:
+        image_hash (str): SHA-256 hash of the image content.
+    
+    Returns:
+        Optional[Dict[str, Any]]: Cached result if exists, None otherwise.
+    """
+    return ocr_cache.get(image_hash)
+
+
+def cache_result(image_hash: str, result: Dict[str, Any]) -> None:
+    """
+    Cache OCR result for a given image hash.
+    
+    Args:
+        image_hash (str): SHA-256 hash of the image content.
+        result (Dict[str, Any]): OCR result to cache.
+    """
+    # Add timestamp to the cached result
+    cached_data = {
+        **result,
+        "cached_at": datetime.now().isoformat(),
+        "cache_hit": True
+    }
+    ocr_cache[image_hash] = cached_data
+
+
+def get_cache_stats() -> Dict[str, Any]:
+    """
+    Get cache statistics for monitoring purposes.
+    
+    Returns:
+        Dict[str, Any]: Cache statistics including size, hits, misses, etc.
+    """
+    return {
+        "cache_size": len(ocr_cache),
+        "max_size": ocr_cache.maxsize,
+        "ttl_seconds": ocr_cache.ttl,
+        "cache_info": ocr_cache.currsize if hasattr(ocr_cache, 'currsize') else len(ocr_cache)
     }
