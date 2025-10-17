@@ -1,17 +1,30 @@
 import os
 import time
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from google.cloud import vision
 from models.ocr_models import OCRRequest, OCRResponse, BatchOCRResponse
-from utils import text_cleanup, get_confidence_score, get_image_metadata
+from utils import (
+    text_cleanup, 
+    get_confidence_score, 
+    get_image_metadata,
+    generate_image_hash,
+    get_cached_result,
+    cache_result,
+    get_cache_stats
+)
 import logging
 from rich import print
 
 
 ocr_router = APIRouter()
 
-# os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "cloud_vision_credentials.json" -> as it's handled automatically in cloud run
+# Initialize rate limiter for OCR endpoints
+limiter = Limiter(key_func=get_remote_address)
+
+# os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "cloud_vision_credentials.json" -> it's handled automatically in google cloud run
 
 try:
     vision_client = vision.ImageAnnotatorClient()
@@ -46,6 +59,20 @@ async def extract_text(image: UploadFile = File(...)):
         )
 
     contents = await image.read()
+    
+    # Generate hash for caching
+    image_hash = generate_image_hash(contents)
+    
+    # Check cache first
+    cached_result = get_cached_result(image_hash)
+    if cached_result:
+        print(f"Cache hit for image: {filename}")
+        # Remove cache_hit flag from response to client
+        cached_result.pop('cache_hit', None)
+        return cached_result
+    
+    print(f"Cache miss for image: {filename}, processing...")
+    
     image_metadata = get_image_metadata(filename, content_type, contents)
 
     # Validate file size
@@ -91,7 +118,6 @@ async def extract_text(image: UploadFile = File(...)):
                 "processing_time_ms": processing_time_ms,
                 "metadata": image_metadata,
             }
-            return json_response
         else:
             print("No text found in the image.")
             json_response = {
@@ -101,7 +127,12 @@ async def extract_text(image: UploadFile = File(...)):
                 "processing_time_ms": processing_time_ms,
                 "metadata": image_metadata,
             }
-            return json_response
+        
+        # Cache the result
+        cache_result(image_hash, json_response)
+        print(f"Cached result for image: {filename}")
+        
+        return json_response
 
     except Exception as e:
         logging.error(f"An unexpected error occurred: {e}")
@@ -117,7 +148,8 @@ async def extract_text(image: UploadFile = File(...)):
     description="Upload an image to extract text content using OCR.",
     response_model=OCRResponse,
 )
-async def extract_text_endpoint(image: UploadFile = File(...)):
+@limiter.limit("5/minute")  # Allow 5 requests per minute per IP
+async def extract_text_endpoint(request: Request, image: UploadFile = File(...)):
     """
     This endpoint accepts a JPG image file and returns the extracted text.
     Args:
@@ -136,7 +168,8 @@ async def extract_text_endpoint(image: UploadFile = File(...)):
     description="Upload multiple images to extract text content using OCR.",
     response_model=BatchOCRResponse,
 )
-async def batch_extract_text(images: list[UploadFile] = File(...)):
+@limiter.limit("5/minute")
+async def batch_extract_text(request: Request, images: list[UploadFile] = File(...)):
     """
     This endpoint accepts multiple JPG image files and returns the extracted text for each.
     Args:
@@ -160,3 +193,21 @@ async def batch_extract_text(images: list[UploadFile] = File(...)):
                 }
             )
     return JSONResponse(content={"results": results})
+
+
+@ocr_router.get(
+    "/cache-stats",
+    summary="Get Cache Statistics",
+    description="Get cache statistics including size, hits, misses, and TTL information.",
+)
+async def get_cache_statistics():
+    """
+    Get cache statistics for monitoring cache performance.
+    Returns:
+        JSONResponse: Cache statistics including size, TTL, and performance metrics.
+    """
+    stats = get_cache_stats()
+    return JSONResponse(content={
+        "cache_statistics": stats,
+        "message": "Cache statistics retrieved successfully"
+    })
