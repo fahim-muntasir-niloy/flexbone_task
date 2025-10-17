@@ -21,7 +21,7 @@ except Exception as e:
     logging.error(f"Failed to initialize Google Cloud Vision client: {e}")
 
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_FILE_SIZE = 10 * 1024 * 1024
 SUPPORTED_CONTENT_TYPES = ["image/jpeg", "image/jpg", "image/png"]
 
 
